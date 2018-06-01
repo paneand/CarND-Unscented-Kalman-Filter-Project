@@ -2,8 +2,8 @@
 #include <iostream>
 #include "json.hpp"
 #include <math.h>
-#include "ukf.h"
-#include "tools.h"
+#include "fusion_ukf.h"
+#include <limits>
 
 using namespace std;
 
@@ -30,15 +30,15 @@ int main()
 {
   uWS::Hub h;
 
-  // Create a Kalman Filter instance
-  UKF ukf;
-
-  // used to compute the RMSE later
-  Tools tools;
+  // Create an Estimator instance
+  FusionEstimator *estimator = new FusionUKF();
   vector<VectorXd> estimations;
   vector<VectorXd> ground_truth;
+  ofstream myfile;
+  myfile.open("ukf_fusion.txt");
 
-  h.onMessage([&ukf,&tools,&estimations,&ground_truth](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
+
+  h.onMessage([&estimator,&estimations,&ground_truth,&myfile](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
@@ -65,12 +65,11 @@ int main()
     	  // reads first element from the current line
     	  string sensor_type;
     	  iss >> sensor_type;
-
+        float px;
+        float py;
     	  if (sensor_type.compare("L") == 0) {
       	  		meas_package.sensor_type_ = MeasurementPackage::LASER;
           		meas_package.raw_measurements_ = VectorXd(2);
-          		float px;
-      	  		float py;
           		iss >> px;
           		iss >> py;
           		meas_package.raw_measurements_ << px, py;
@@ -86,6 +85,8 @@ int main()
           		iss >> ro;
           		iss >> theta;
           		iss >> ro_dot;
+              px = ro*cos(theta);
+              py = ro*sin(theta);
           		meas_package.raw_measurements_ << ro,theta, ro_dot;
           		iss >> timestamp;
           		meas_package.timestamp_ = timestamp;
@@ -103,35 +104,55 @@ int main()
     	  gt_values(1) = y_gt; 
     	  gt_values(2) = vx_gt;
     	  gt_values(3) = vy_gt;
-    	  ground_truth.push_back(gt_values);
-          
-          //Call ProcessMeasurment(meas_package) for Kalman filter
-    	  ukf.ProcessMeasurement(meas_package);    	  
 
-    	  //Push the current estimated x,y positon from the Kalman filter's state vector
-
-    	  VectorXd estimate(4);
-
-    	  double p_x = ukf.x_(0);
-    	  double p_y = ukf.x_(1);
-    	  double v  = ukf.x_(2);
-    	  double yaw = ukf.x_(3);
-
-    	  double v1 = cos(yaw)*v;
-    	  double v2 = sin(yaw)*v;
-
-    	  estimate(0) = p_x;
-    	  estimate(1) = p_y;
-    	  estimate(2) = v1;
-    	  estimate(3) = v2;
-    	  
-    	  estimations.push_back(estimate);
-
-    	  VectorXd RMSE = tools.CalculateRMSE(estimations, ground_truth);
-
+        double p_x,p_y,v,yaw,v1,v2;
+        VectorXd estimate = estimator->GetEstimate(meas_package);
+    	  if(estimate(0)==std::numeric_limits<float>::max()){
+          //std::cout << "Skipped estimate" << std::endl;
+          if (!estimations.empty()){
+            estimate = estimations.back();    // Take the last estimate
+          }
+          else{   
+            json msgJson;
+            // Return nothing
+            msgJson["estimate_x"] = 0;
+            msgJson["estimate_y"] = 0;
+            msgJson["rmse_x"] =  0;
+            msgJson["rmse_y"] =  0;
+            msgJson["rmse_vx"] = 0;
+            msgJson["rmse_vy"] = 0;
+            auto msg = "42[\"estimate_marker\"," + msgJson.dump() + "]";
+            // std::cout << msg << std::endl;
+            ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+            return;
+          }
+        } 
+        else
+        {
+          p_x = estimate(0);
+          p_y = estimate(1);
+          v =   estimate(2);
+          yaw = estimate(3);
+          estimate = VectorXd(4);
+          v1 =  cos(yaw)*v;
+          v2 =  sin(yaw)*v;
+          estimate(0) = p_x;
+          estimate(1) = p_y;
+          estimate(2) = v1;
+          estimate(3) = v2;
+          estimations.push_back(estimate);
+          ground_truth.push_back(gt_values);
+          // ['px_est','py_est','vx_est','vy_est','px_meas','py_meas','px_gt','py_gt','vx_gt','vy_gt']
+          myfile <<  estimate(0) << "\t" << estimate(1) << "\t"; 
+          myfile <<  estimate(2) << "\t" << estimate(3) << "\t";
+          myfile <<  px << "\t" << py << "\t";
+          myfile <<  gt_values(0) << "\t" << gt_values(1) << "\t"; 
+          myfile <<  gt_values(2) << "\t" << gt_values(3) << std::endl;
+        }
+        VectorXd RMSE = estimator->CalculateRMSE(estimations, ground_truth);
           json msgJson;
-          msgJson["estimate_x"] = p_x;
-          msgJson["estimate_y"] = p_y;
+          msgJson["estimate_x"] = estimate(0);
+          msgJson["estimate_y"] = estimate(1);
           msgJson["rmse_x"] =  RMSE(0);
           msgJson["rmse_y"] =  RMSE(1);
           msgJson["rmse_vx"] = RMSE(2);
