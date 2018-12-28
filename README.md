@@ -166,7 +166,7 @@ Besides the limitations of C++, at the moment a functional programming approach
 is strongly discouraged given that functional programming languages do not have
 spatial and time complexity bounds known in advance given a fixed algorithm,
 making them inappropriate for real time systems
-([here](https://pdfs.semanticscholar.org/c5ea/0ee9cfd64991d3b2acaa54ec439e9a172b5b.pdf)an
+([here](https://pdfs.semanticscholar.org/c5ea/0ee9cfd64991d3b2acaa54ec439e9a172b5b.pdf) an
 article about the topic).
 
 Estimation results
